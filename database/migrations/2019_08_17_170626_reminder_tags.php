@@ -13,7 +13,13 @@ class ReminderTags extends Migration
      */
     public function up()
     {
-        //
+        Schema::create('reminder_tags', function (Blueprint $table) {
+            $table->integer('id')->nullable();
+            $table->string('name')->nullable();
+            $table->text('description')->nullable();
+            $table->string('category')->nullable();
+            $table->timestamps();
+        });
     }
 
     /**
@@ -23,6 +29,6 @@ class ReminderTags extends Migration
      */
     public function down()
     {
-        //
+        Schema::dropIfExists('reminder_tags');
     }
 }
