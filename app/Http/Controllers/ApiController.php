@@ -44,99 +44,88 @@ class ApiController extends Controller
     {
         $contactMail = $request->contact_email;
 
-        // request for email address if not sent
-        if(!$contactMail)
+        if(!$contactMail)                        // request for email address if not sent
         {
-            return response()->json(["message"=>"Please add email address"], 200); 
+            return response()->json(["message"=>"Please add email address"], 204); 
         }
 
-        $infusionsoft = new InfusionsoftHelper();
-        // check if database have sample data else generate sample data
-        $userCount =  DB::table('users')->get()->count();        
+        $infusionsoft = new InfusionsoftHelper();        
+        $userCount =  DB::table('users')->get()->count();        // check if database have sample data else generate sample data
+        $user = array();
         if($userCount==0)
         {
-            $this->exampleCustomer();
+           $user = $this->exampleCustomer();
         }
 
-        // check if contact exists on infusion
-        $userContact = $infusionsoft->getContact($contactMail);
+        
+        $userContact = $infusionsoft->getContact($contactMail);  // check if contact exists on infusion
         if(!$userContact)
         {
-            return response()->json(["message"=>"contact email does not exist"], 400); 
+            return response()->json(["message"=>"contact email does not exist, please use this email: ".$user->email], 400); 
         }
 
-        // store products in an array
-        $userProducts = explode(",", $userContact['_Products']);
+        $userProducts = explode(",", $userContact['_Products']); // store products in an array
         $userContactID = $userContact['Id'];
+        
+        $tag = $this->processAssignment($contactMail, $userProducts);
+        $tagId = $this->getTagId($tag);                        // get module reminder tag
+        $tagResponse = $this->addTag($userContactID, $tagId);  // add tag to contact id
+        return response()->json($tagResponse, 200);             
+    }
+
+    public function processAssignment($contactMail, $userProducts)
+    {
         $productCount = count($userProducts);
         $count = 0;
-
-        // loop through products and check for modules
-        foreach($userProducts as $courseKey)
+        
+        foreach($userProducts as $courseKey)  // loop through products and check for modules
         {
             $count++;
             $nextModule = [];
             $lastCompletedModule = $this->getLastCompletedModule($contactMail, $courseKey );
             
-            // if user has a completed module, increment the module id and check for the next module
-            if($lastCompletedModule!=[])
+            if($lastCompletedModule!=[])    // if user has a completed module, increment the module id and check for the next module
             {
                 $moduleId = $lastCompletedModule->module_id + 1;
                 $nextModule = $this->getNextModule($moduleId);
-
-                // if there is no next module for the course move to the next course
-                if($nextModule==[])
+               
+                if($nextModule==[])         // if there is no next module for the course move to the next course
                 {
                     continue;
                 }
-                
-                // check if the module belongs to the existing course 
-                if(strtolower($nextModule->course_key)==strtolower($courseKey))
+                               
+                if(strtolower($nextModule->course_key)==strtolower($courseKey))  // check if the module belongs to the existing course 
                 {
                     $tag = "Start ".$nextModule->name." Reminders";
-                    // get module reminder tag
-                    $tagId = $this->getTagId($tag);
-
-                    // add tag to contact id
-                    $tagResponse = $this->addTag($userContactID, $tagId);
-                    return response()->json($tagResponse, 200);
+                    return $tag;
                 }
 
-                // if at the end of the loop there are no modules belonging to the course, send completion message
-                if($count==$productCount)
+                if($count==$productCount)   // if at the end of the loop there are no modules belonging to the course, send completion message
                 {
                     $tag = "Module reminders completed";
-                    
-                    $tagId = $this->getTagId($tag);
-                    $tagResponse = $this->addTag($userContactID, $tagId);
-                    return response()->json($tagResponse, 200);
+                    return $tag;
                 }
                
-            }elseif($lastCompletedModule==[]){
-                // if no module has been taken under the current course, add the first course to user
-                $nextModule = $this->getNextCourseFirstModule($courseKey);
-                $tag = "Start ".$nextModule->name." Reminders";
-                
-                $tagId = $this->getTagId($tag);
-                $tagResponse = $this->addTag($userContactID, $tagId);
-                return response()->json($tagResponse, 200);
+            }elseif($lastCompletedModule==[])
+            {
+                $nextModule = $this->getNextCourseFirstModule($courseKey);    // if no module has been taken under the current course, add the first course to user
+                $tag = "Start ".$nextModule->name." Reminders";                
+                return $tag;
             }
         }
-             
     }
-   // function to append tag to user
-    private function addTag($userContactID, $tagId)
+   
+    private function addTag($userContactID, $tagId)      // function to append tag to user
     {
         $infusionsoft = new InfusionsoftHelper();
-
-        if($tagId==0){
-           
+        if($tagId==0){           
             $response = array("success"=>false, "message"=>"Module reminders completed");                                        
             return response()->json($response);
         }
         
         $addTag = $infusionsoft->addTag($userContactID, $tagId);
         $response = array("success"=>false, "message"=>"Reminder not sent"); 
+
         if($addTag==1){
             $response = array("success"=>true, "message"=>"Reminder sent successfully");
         } 
@@ -144,44 +133,42 @@ class ApiController extends Controller
         return response()->json($response);
     }
 
-    // function to get the last module taken for the current course by user
-    private function getLastCompletedModule($userEmail, $courseKey)
+    
+    private function getLastCompletedModule($userEmail, $courseKey)   // function to get the last module taken for the current course by user
     {
         $userLastCompletedModule =  DB::table('user_completed_modules')
-                            ->join('users', 'user_completed_modules.user_id', '=', 'users.id')
-                            ->join('modules', 'user_completed_modules.module_id', '=', 'modules.id')
-                            ->select('user_completed_modules.user_id', 'user_completed_modules.module_id', 'modules.course_key', 'modules.name')
-                            ->where([
-                                ['users.email', '=', $userEmail],
-                                ['modules.course_key', '=', $courseKey],
-                            ])
-                            ->orderBy('user_completed_modules.module_id', 'asc')
-                            ->get()
-                            ->last();                            
+                                    ->join('users', 'user_completed_modules.user_id', '=', 'users.id')
+                                    ->join('modules', 'user_completed_modules.module_id', '=', 'modules.id')
+                                    ->select('user_completed_modules.user_id', 'user_completed_modules.module_id', 'modules.course_key', 'modules.name')
+                                    ->where([
+                                        ['users.email', '=', $userEmail],
+                                        ['modules.course_key', '=', $courseKey],
+                                    ])
+                                    ->orderBy('user_completed_modules.module_id', 'asc')
+                                    ->get()
+                                    ->last();                            
         return $userLastCompletedModule;
     }
-    // function to get the next module to remind the user of
-    private function getNextModule($moduleId)
+    
+    private function getNextModule($moduleId)     // function to get the next module to remind the user of
     { 
         $modules =  DB::table('modules')
                     ->find($moduleId);
         return $modules;
-
     }
-    // function to get the first module of a new course
-    private function getNextCourseFirstModule($courseKey)
+    
+    private function getNextCourseFirstModule($courseKey)   // function to get the first module of a new course
     { 
         $modules =  DB::table('modules')
                     ->where('course_key', '=', $courseKey)
                     ->get()
                     ->first(); 
         return $modules;
-
     }
 
-    // function to get TagID
+    
 
-    private function getTagId($tag)
+    private function getTagId($tag)      // function to get TagID
     {
         $modules =  DB::table('reminder_tags')
                     ->where('name', '=', $tag)
